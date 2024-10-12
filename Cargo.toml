@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = [
+    "voice"
+]
+
+[workspace.package]
+edition = "2021"
+
+[workspace.dependencies]
+voice = { path = "voice" }
+
+thiserror = "1.0.64"
+smallvec = "1.13.2"
+windows = { version = "0.58.0", features = [
+    "Win32_System_Com",
+    "Win32_Media_MediaFoundation",
+] }
+
+[package]
+name = "at_four"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+voice.workspace = true
+
+text_io = "0.1.12"
+windows.workspace = true
+
