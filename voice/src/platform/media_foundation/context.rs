@@ -1,16 +1,17 @@
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::{Arc, Mutex, Weak};
 
 use windows::Win32::Media::MediaFoundation::*;
 
 /// Ensures MediaFoundation initialization correctness.
+#[derive(Clone)]
 pub struct Context {
-    _initialization: Initialization,
+    _initialization: Arc<Initialization>,
 }
 
 impl Context {
     pub fn new() -> crate::error::Result<Self> {
         Ok(Self {
-            _initialization: Initialization::new()?,
+            _initialization: Initialization::global()?,
         })
     }
 
@@ -44,21 +45,34 @@ impl Context {
 // Actually tracks Media Foundation initialization.
 struct Initialization {}
 
-static MEDIA_FOUNDATION_INITIALIZED: AtomicU16 = AtomicU16::new(0);
+static MEDIA_FOUNDATION_INITIALIZATION: Mutex<Option<Weak<Initialization>>> = Mutex::new(None);
 
 impl Initialization {
-    fn new() -> windows::core::Result<Self> {
-        if MEDIA_FOUNDATION_INITIALIZED.fetch_add(1, Ordering::SeqCst) == 0 {
-            unsafe { MFStartup(MF_VERSION, MFSTARTUP_LITE) }?;
-        }
+    fn global() -> crate::error::Result<Arc<Initialization>> {
+        let mut guard = MEDIA_FOUNDATION_INITIALIZATION.lock().unwrap();
+        let instance = match guard.as_mut() {
+            None => Arc::new_cyclic(|weak| {
+                *guard = Some(weak.clone());
+                // TODO: Dont panic if MF Startup corrupted.
+                unsafe { Initialization::new() }.unwrap()
+            }),
+            Some(init) => Weak::upgrade(init).unwrap(),
+        };
+        Ok(instance)
+    }
+
+    /// SAFETY: MUST be called exactly once before all references go out of scope.
+    unsafe fn new() -> crate::error::Result<Self> {
+        unsafe { MFStartup(MF_VERSION, MFSTARTUP_LITE) }?;
         Ok(Self {})
     }
 }
 
 impl Drop for Initialization {
     fn drop(&mut self) {
-        if MEDIA_FOUNDATION_INITIALIZED.fetch_sub(1, Ordering::SeqCst) == 1 {
-            unsafe { MFShutdown() }.unwrap();
-        }
+        let mut guard = MEDIA_FOUNDATION_INITIALIZATION.lock().unwrap();
+        *guard = None;
+
+        unsafe { MFShutdown() }.unwrap();
     }
 }

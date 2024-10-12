@@ -29,42 +29,41 @@ impl<'ctx> crate::traits::Host for Host<'ctx> {
     }
 }
 
+type CaptureDevices<'ctx> = SmallVec<[AudioDevice<'ctx>; 10]>;
+
 struct Devices<'ctx> {
-    capture: OnceCell<&'ctx [IMFActivate]>,
-    devices: OnceCell<SmallVec<[AudioDevice<'ctx>; 10]>>,
+    devices: OnceCell<CaptureDevices<'ctx>>,
 }
 
 impl<'ctx> Devices<'ctx> {
     fn new() -> Self {
         Self {
-            capture: OnceCell::new(),
             devices: OnceCell::new(),
         }
     }
 
     fn get(&self, context: &'ctx Context) -> crate::error::Result<&[AudioDevice<'ctx>]> {
-        let devices = self
-            .devices
-            .get_or_try_init(|| -> crate::error::Result<_> {
-                let capture_devices = self
-                    .capture
-                    .get_or_try_init(|| self.get_capture_devices(context))?;
+        #[inline(always)]
+        fn get_or_try_init_devices<'a, 'ctx>(
+            context: &'ctx Context,
+            devices: &'a OnceCell<CaptureDevices<'ctx>>,
+        ) -> crate::error::Result<&'a CaptureDevices<'ctx>> {
+            devices.get_or_try_init(|| {
+                let capture = Devices::get_capture_devices(context)?;
                 Ok(SmallVec::from_iter(
-                    capture_devices
-                        .iter()
-                        .map(|source| AudioDevice::from(source)),
+                    capture.iter().map(|source| AudioDevice::from(source)),
                 ))
-            })?;
+            })
+        }
+
+        let devices = get_or_try_init_devices(context, &self.devices)?;
         Ok(devices.as_ref())
     }
 
-    fn get_capture_devices(
-        &self,
-        context: &'ctx Context,
-    ) -> crate::error::Result<&'ctx [IMFActivate]> {
-        let attributes = context.create_attributes(1)?;
+    fn get_capture_devices(context: &'ctx Context) -> crate::error::Result<&'ctx [IMFActivate]> {
         unsafe {
-            // SAFETY: Media Foundation MUST be initialized.
+            let attributes = context.create_attributes(1)?;
+            // SAFETY: Media Foundation MUST be initialized (Guaranteed by context).
             attributes.SetGUID(
                 &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
                 &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_AUDCAP_GUID,
@@ -88,17 +87,19 @@ impl<'ctx> AudioDevice<'ctx> {
         }
     }
 
-    fn get_readable_name(&self) -> crate::error::Result<String> {
+    // SAFETY: Context MUST be initialized.
+    unsafe fn get_readable_name(&self) -> crate::error::Result<String> {
         let mut name: PWSTR = PWSTR::null();
         let mut name_len: u32 = 0;
-        unsafe {
-            self.source.GetAllocatedString(
-                &MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME,
-                &mut name,
-                &mut name_len,
-            )?;
-            Ok(name.to_string()?)
-        }
+        // SAFETY: Media Foundation MUST be initialized.
+        self.source.GetAllocatedString(
+            &MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME,
+            &mut name,
+            &mut name_len,
+        )?;
+        // SAFETY: We got this string from API and copy it into safe place...
+        // What could go wrong?
+        Ok(name.to_string()?)
     }
 }
 
@@ -106,7 +107,7 @@ impl<'ctx> crate::traits::AudioDevice for AudioDevice<'ctx> {
     fn readable_name(&self) -> crate::error::Result<&str> {
         let readable_name = self
             .readable_name
-            .get_or_try_init(|| self.get_readable_name())?;
+            .get_or_try_init(|| unsafe { self.get_readable_name() })?;
         Ok(readable_name.as_str())
     }
 }
