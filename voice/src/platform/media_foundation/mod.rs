@@ -8,16 +8,16 @@ use windows::core::PWSTR;
 use windows::Win32::Media::MediaFoundation::*;
 
 pub struct Host<'ctx> {
-    context: Context,
+    context: &'ctx Context,
     devices: Devices<'ctx>,
 }
 
 impl<'ctx> Host<'ctx> {
-    pub fn new() -> crate::error::Result<Self> {
-        Ok(Self {
-            context: Context::new()?,
+    pub fn new(context: &'ctx Context) -> Self {
+        Self {
+            context,
             devices: Devices::new(),
-        })
+        }
     }
 }
 
@@ -25,7 +25,7 @@ impl<'ctx> crate::traits::Host for Host<'ctx> {
     type Device = AudioDevice<'ctx>;
 
     fn audio_devices(&self) -> crate::error::Result<&[Self::Device]> {
-        Ok(Devices::get(&self.devices, &self.context)?)
+        Ok(&self.devices.get(&self.context)?)
     }
 }
 
